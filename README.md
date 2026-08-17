@@ -1316,6 +1316,44 @@ kubectl get pods  # This will trigger OIDC authentication
 
 </details>
 
+<!-- API Server Authentication Configuration -->
+<details>
+<summary><b>API Server Authentication Configuration</b></summary>
+
+The Kubernetes API server supports [structured authentication configuration](https://kubernetes.io/docs/reference/access-authn-authz/authentication/#using-authentication-configuration) (`AuthenticationConfiguration`) as a modern replacement for authentication related command-line flags. Talos deploys it via the `KubeAuthenticationConfig` machine config document, which this module exposes through the `kube_api_authentication_config` variable.
+
+A common use case is restricting anonymous access to the API server so that only selected endpoints, such as the OIDC discovery endpoints, can be accessed without authentication.
+
+> [!NOTE]
+> The `KubeAuthenticationConfig` document requires **Talos v1.14.0 or later** (`talos_version`).
+
+#### Example Configuration
+
+```hcl
+kube_api_authentication_config = {
+  anonymous = {
+    enabled = true                                    # Keep anonymous auth enabled, but...
+    conditions = [                                    # ...only for these endpoints
+      { path = "/.well-known/openid-configuration" }, # OIDC discovery document
+      { path = "/openid/v1/jwks" },                   # Service account signing keys
+      { path = "/healthz" },                          # Health check endpoints used by probes
+      { path = "/livez" },
+      { path = "/readyz" }
+    ]
+  }
+}
+```
+
+The value is passed through as-is to the `configuration` field of the `KubeAuthenticationConfig` document. There is no need to specify the `apiVersion` and `kind` fields of the `AuthenticationConfiguration`, Talos injects these automatically. Besides `anonymous`, all other sections of the `AuthenticationConfiguration` (e.g. `jwt`) are supported as well.
+
+> [!IMPORTANT]
+> When restricting anonymous access, make sure the health check endpoints (`/healthz`, `/livez`, `/readyz`) remain anonymously accessible, as they are probed without credentials. Omitting them can make the API server appear unhealthy.
+
+> [!WARNING]
+> The kube-apiserver refuses to start if a structured authentication configuration is combined with the `oidc-*` or `anonymous-auth` flags. Therefore `kube_api_authentication_config` cannot be combined with `oidc_enabled` or these arguments in `kube_api_extra_args`, use the `jwt` section of the authentication configuration instead.
+
+</details>
+
 <!-- Trusted CA Certificates -->
 <details>
 <summary><b>Trusted CA Certificates</b></summary>

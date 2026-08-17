@@ -1309,6 +1309,37 @@ variable "kube_api_extra_args" {
   description = "Specifies additional command-line arguments to be passed to the kube-apiserver. This allows for customization of the API server's behavior according to specific cluster requirements."
 }
 
+variable "kube_api_authentication_config" {
+  type        = any
+  default     = null
+  description = "Structured authentication configuration (AuthenticationConfiguration) for the kube-apiserver, applied via a Talos 'KubeAuthenticationConfig' document. Provide the configuration content without the 'apiVersion' and 'kind' fields, as Talos injects these automatically. This can be used e.g. to limit anonymous access to selected endpoints such as '/.well-known/openid-configuration' and '/openid/v1/jwks'. Requires Talos v1.14.0 or later."
+
+  validation {
+    condition     = var.kube_api_authentication_config == null || can(keys(var.kube_api_authentication_config))
+    error_message = "The kube_api_authentication_config value must be an object, e.g. { anonymous = { enabled = true, conditions = [{ path = \"/healthz\" }] } }."
+  }
+
+  validation {
+    condition = (
+      var.kube_api_authentication_config == null ||
+      !contains(try(keys(var.kube_api_authentication_config), []), "anonymous") ||
+      !contains(keys(var.kube_api_extra_args), "anonymous-auth")
+    )
+    error_message = "The 'anonymous-auth' argument in kube_api_extra_args cannot be combined with the 'anonymous' section in kube_api_authentication_config, as these options are mutually exclusive in the kube-apiserver."
+  }
+
+  validation {
+    condition = (
+      var.kube_api_authentication_config == null ||
+      (
+        !var.oidc_enabled &&
+        length([for arg in keys(var.kube_api_extra_args) : arg if startswith(arg, "oidc-") || arg == "authentication-config"]) == 0
+      )
+    )
+    error_message = "OIDC settings (oidc_enabled or 'oidc-*'/'authentication-config' arguments in kube_api_extra_args) cannot be combined with kube_api_authentication_config, as the kube-apiserver 'oidc-*' flags are mutually exclusive with a structured authentication configuration. Use the 'jwt' section of kube_api_authentication_config instead."
+  }
+}
+
 
 # Talos CCM
 variable "talos_ccm_enabled" {

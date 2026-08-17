@@ -9,6 +9,15 @@ locals {
     "oidc-groups-prefix"  = var.oidc_groups_prefix
   } : {}
 
+  # Kube API Server Authentication Configuration (requires Talos >= v1.14.0)
+  kube_api_authentication_config_patches = var.kube_api_authentication_config != null ? [
+    {
+      apiVersion    = "v1alpha1"
+      kind          = "KubeAuthenticationConfig"
+      configuration = var.kube_api_authentication_config
+    }
+  ] : []
+
   # Kubernetes Manifests for Talos
   talos_inline_manifests = concat(
     [local.hcloud_secret_manifest],
@@ -149,6 +158,7 @@ locals {
           auto       = "off"
         }
       ],
+      local.kube_api_authentication_config_patches,
       local.control_plane_public_vip_ipv4_enabled ? [{
         apiVersion = "v1alpha1"
         kind       = "HCloudVIPConfig"
