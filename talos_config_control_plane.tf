@@ -39,21 +39,26 @@ locals {
     ]
   }
 
-  kube_api_authentication_configuration = (
-    var.kube_api_authentication_config != null ? var.kube_api_authentication_config :
-    var.oidc_enabled ? local.kube_api_oidc_authentication_configuration :
-    null
-  )
-
   # Kube API Server Authentication Configuration.
   # When set, it replaces the Talos default authentication configuration entirely.
-  kube_api_authentication_config_patches = local.kube_api_authentication_configuration != null ? [
-    {
-      apiVersion    = "v1alpha1"
-      kind          = "KubeAuthenticationConfig"
-      configuration = local.kube_api_authentication_configuration
-    }
-  ] : []
+  # Note: built via concat() of guarded lists, as the user-supplied configuration and
+  # the OIDC-generated one have different object types.
+  kube_api_authentication_config_patches = concat(
+    var.kube_api_authentication_config != null ? [
+      {
+        apiVersion    = "v1alpha1"
+        kind          = "KubeAuthenticationConfig"
+        configuration = var.kube_api_authentication_config
+      }
+    ] : [],
+    var.kube_api_authentication_config == null && var.oidc_enabled ? [
+      {
+        apiVersion    = "v1alpha1"
+        kind          = "KubeAuthenticationConfig"
+        configuration = local.kube_api_oidc_authentication_configuration
+      }
+    ] : []
+  )
 
   # Kubernetes control plane components (Talos v1.14+ multi-document style)
   kube_control_plane_component_patches = concat(
