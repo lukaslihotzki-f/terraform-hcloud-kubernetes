@@ -1190,6 +1190,9 @@ When enabled, users can authenticate using their existing organizational credent
 
 OIDC authentication works by validating JWT tokens issued by your identity provider, extracting user information and group memberships, and mapping them to Kubernetes RBAC roles.
 
+> [!NOTE]
+> OIDC is configured through the `jwt` section of the kube-apiserver's structured authentication configuration (`KubeAuthenticationConfig` document). As with the former `oidc-*` flags, usernames from claims other than `email` are prefixed with `<issuer-url>#`. For a fully custom setup (e.g. multiple issuers or claim validation rules), use `kube_api_authentication_config` instead of the `oidc_*` variables.
+
 #### Example Configuration
 
 ```hcl
@@ -1322,10 +1325,7 @@ kubectl get pods  # This will trigger OIDC authentication
 
 The Kubernetes API server supports [structured authentication configuration](https://kubernetes.io/docs/reference/access-authn-authz/authentication/#using-authentication-configuration) (`AuthenticationConfiguration`) as a modern replacement for authentication related command-line flags. Talos deploys it via the `KubeAuthenticationConfig` machine config document, which this module exposes through the `kube_api_authentication_config` variable.
 
-A common use case is restricting anonymous access to the API server so that only selected endpoints, such as the OIDC discovery endpoints, can be accessed without authentication.
-
-> [!NOTE]
-> The `KubeAuthenticationConfig` document requires **Talos v1.14.0 or later** (`talos_version`).
+By default, Talos allows anonymous access only to the health check endpoints (`/livez`, `/readyz`, `/healthz`). A common use case for a custom configuration is additionally allowing anonymous access to the OIDC discovery endpoints.
 
 #### Example Configuration
 
@@ -1347,10 +1347,10 @@ kube_api_authentication_config = {
 The value is passed through as-is to the `configuration` field of the `KubeAuthenticationConfig` document. There is no need to specify the `apiVersion` and `kind` fields of the `AuthenticationConfiguration`, Talos injects these automatically. Besides `anonymous`, all other sections of the `AuthenticationConfiguration` (e.g. `jwt`) are supported as well.
 
 > [!IMPORTANT]
-> When restricting anonymous access, make sure the health check endpoints (`/healthz`, `/livez`, `/readyz`) remain anonymously accessible, as they are probed without credentials. Omitting them can make the API server appear unhealthy.
+> The value **replaces** the Talos default authentication configuration entirely. When restricting anonymous access, make sure the health check endpoints (`/healthz`, `/livez`, `/readyz`) remain anonymously accessible, as they are probed without credentials. Omitting them can make the API server appear unhealthy.
 
 > [!WARNING]
-> The kube-apiserver refuses to start if a structured authentication configuration is combined with the `oidc-*` or `anonymous-auth` flags. Therefore `kube_api_authentication_config` cannot be combined with `oidc_enabled` or these arguments in `kube_api_extra_args`, use the `jwt` section of the authentication configuration instead.
+> The kube-apiserver always runs with a structured authentication configuration, which is mutually exclusive with the `oidc-*`, `anonymous-auth` and `authentication-config` flags in `kube_api_extra_args`. `kube_api_authentication_config` also cannot be combined with `oidc_enabled` (which configures the `jwt` section of the same document), add your own `jwt` section instead.
 
 </details>
 

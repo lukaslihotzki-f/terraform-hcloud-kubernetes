@@ -188,6 +188,27 @@ locals {
         address = ns
       }
     ]
+    hostDNS = local.talos_host_dns
+  }
+
+  # Kubernetes Network Config (Talos v1.14+ multi-document style)
+  talos_kube_network_config_patch = {
+    apiVersion     = "v1alpha1"
+    kind           = "KubeNetworkConfig"
+    dnsDomain      = var.cluster_domain
+    podSubnets     = [local.network_pod_ipv4_cidr]
+    serviceSubnets = [local.network_service_ipv4_cidr]
+  }
+
+  # Delete the default discovery service document. Discovery is configured via the
+  # legacy `.cluster.discovery` section instead, which is the only way to also
+  # control the Kubernetes discovery registry. The legacy service registry endpoint
+  # is surfaced through the same code path as the DiscoveryServiceConfig document.
+  talos_discovery_service_config_delete_patch = {
+    apiVersion = "v1alpha1"
+    kind       = "DiscoveryServiceConfig"
+    name       = "default"
+    "$patch"   = "delete"
   }
 
   # Static Hosts (/etc/hosts)
@@ -284,33 +305,18 @@ locals {
           var.talos_sysctls_extra_args
         )
         registries = var.talos_registries
-        features = {
-          hostDNS = local.talos_host_dns
-        }
         logging = {
           destinations = var.talos_logging_destinations
         }
       }
       cluster = {
-        network = {
-          dnsDomain      = var.cluster_domain
-          podSubnets     = [local.network_pod_ipv4_cidr]
-          serviceSubnets = [local.network_service_ipv4_cidr]
-          cni            = { name = "none" }
-        }
-        proxy = merge(
-          {
-            disabled = var.cilium_kube_proxy_replacement_enabled
-          },
-          var.kubernetes_proxy_image != null ? {
-            image = "${var.kubernetes_proxy_image}:${var.kubernetes_version}"
-          } : {}
-        )
         discovery = local.talos_discovery
       }
     }],
     local.talos_system_volume_config_patches,
     [local.talos_resolver_config_patch],
+    [local.talos_kube_network_config_patch],
+    [local.talos_discovery_service_config_delete_patch],
     [local.talos_time_sync_config_patch],
     local.talos_static_host_config_patches,
     local.talos_trusted_certs_config_patches,

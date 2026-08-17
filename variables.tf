@@ -784,8 +784,16 @@ variable "talos_cloud_arm64_image_selector" {
 # Talos
 variable "talos_version" {
   type        = string
-  default     = "v1.13.9" # https://github.com/siderolabs/talos
+  default     = "v1.14.0-rc.2" # https://github.com/siderolabs/talos
   description = "Specifies the version of Talos to be used in generated machine configurations."
+
+  validation {
+    condition = (
+      tonumber(regex("^v?(\\d+)", var.talos_version)[0]) > 1 ||
+      tonumber(regex("^v?\\d+\\.(\\d+)", var.talos_version)[0]) >= 14
+    )
+    error_message = "This module generates Talos v1.14+ multi-document machine configurations and therefore requires Talos v1.14.0 or later."
+  }
 }
 
 variable "talos_schematic_id" {
@@ -1307,12 +1315,20 @@ variable "kube_api_extra_args" {
   type        = map(string)
   default     = {}
   description = "Specifies additional command-line arguments to be passed to the kube-apiserver. This allows for customization of the API server's behavior according to specific cluster requirements."
+
+  validation {
+    condition = length([
+      for arg in keys(var.kube_api_extra_args) : arg
+      if arg == "anonymous-auth" || arg == "authentication-config" || startswith(arg, "oidc-")
+    ]) == 0
+    error_message = "The kube-apiserver is always started with a structured authentication configuration ('--authentication-config'), which is mutually exclusive with the 'anonymous-auth', 'authentication-config' and 'oidc-*' arguments. Use kube_api_authentication_config (or the oidc_* variables) instead."
+  }
 }
 
 variable "kube_api_authentication_config" {
   type        = any
   default     = null
-  description = "Structured authentication configuration (AuthenticationConfiguration) for the kube-apiserver, applied via a Talos 'KubeAuthenticationConfig' document. Provide the configuration content without the 'apiVersion' and 'kind' fields, as Talos injects these automatically. This can be used e.g. to limit anonymous access to selected endpoints such as '/.well-known/openid-configuration' and '/openid/v1/jwks'. Requires Talos v1.14.0 or later."
+  description = "Structured authentication configuration (AuthenticationConfiguration) for the kube-apiserver, applied via a Talos 'KubeAuthenticationConfig' document. Provide the configuration content without the 'apiVersion' and 'kind' fields, as Talos injects these automatically. This replaces the Talos default authentication configuration entirely, so remember to keep the anonymous authenticator rules for the health check endpoints ('/healthz', '/livez', '/readyz'). This can be used e.g. to limit anonymous access to selected endpoints such as '/.well-known/openid-configuration' and '/openid/v1/jwks'."
 
   validation {
     condition     = var.kube_api_authentication_config == null || can(keys(var.kube_api_authentication_config))
@@ -1320,23 +1336,8 @@ variable "kube_api_authentication_config" {
   }
 
   validation {
-    condition = (
-      var.kube_api_authentication_config == null ||
-      !contains(try(keys(var.kube_api_authentication_config), []), "anonymous") ||
-      !contains(keys(var.kube_api_extra_args), "anonymous-auth")
-    )
-    error_message = "The 'anonymous-auth' argument in kube_api_extra_args cannot be combined with the 'anonymous' section in kube_api_authentication_config, as these options are mutually exclusive in the kube-apiserver."
-  }
-
-  validation {
-    condition = (
-      var.kube_api_authentication_config == null ||
-      (
-        !var.oidc_enabled &&
-        length([for arg in keys(var.kube_api_extra_args) : arg if startswith(arg, "oidc-") || arg == "authentication-config"]) == 0
-      )
-    )
-    error_message = "OIDC settings (oidc_enabled or 'oidc-*'/'authentication-config' arguments in kube_api_extra_args) cannot be combined with kube_api_authentication_config, as the kube-apiserver 'oidc-*' flags are mutually exclusive with a structured authentication configuration. Use the 'jwt' section of kube_api_authentication_config instead."
+    condition     = var.kube_api_authentication_config == null || !var.oidc_enabled
+    error_message = "kube_api_authentication_config cannot be combined with oidc_enabled, as OIDC is configured through the same authentication configuration. Add a 'jwt' section to kube_api_authentication_config instead."
   }
 }
 

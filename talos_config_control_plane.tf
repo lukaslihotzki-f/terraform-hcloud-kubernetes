@@ -1,22 +1,129 @@
 locals {
   talos_allow_scheduling_on_control_planes = coalesce(var.cluster_allow_scheduling_on_control_planes, (local.worker_sum + local.cluster_autoscaler_max_sum) == 0)
 
-  kube_api_oidc_configuration = var.oidc_enabled ? {
-    "oidc-issuer-url"     = var.oidc_issuer_url
-    "oidc-client-id"      = var.oidc_client_id
-    "oidc-username-claim" = var.oidc_username_claim
-    "oidc-groups-claim"   = var.oidc_groups_claim
-    "oidc-groups-prefix"  = var.oidc_groups_prefix
-  } : {}
+  # Default anonymous authentication rules, matching the Talos-generated defaults.
+  # Required for the anonymous health check probes of the kube-apiserver.
+  kube_api_default_anonymous_auth = {
+    enabled = true
+    conditions = [
+      { path = "/livez" },
+      { path = "/readyz" },
+      { path = "/healthz" },
+    ]
+  }
 
-  # Kube API Server Authentication Configuration (requires Talos >= v1.14.0)
-  kube_api_authentication_config_patches = var.kube_api_authentication_config != null ? [
+  # OIDC is configured via the structured AuthenticationConfiguration (jwt section):
+  # Talos v1.14+ always runs the kube-apiserver with '--authentication-config', which
+  # cannot be combined with the legacy 'oidc-*' flags.
+  kube_api_oidc_authentication_configuration = {
+    anonymous = local.kube_api_default_anonymous_auth
+    jwt = [
+      {
+        issuer = {
+          url       = var.oidc_issuer_url
+          audiences = [var.oidc_client_id]
+        }
+        claimMappings = {
+          username = {
+            claim = var.oidc_username_claim
+            # Parity with the 'oidc-username-prefix' flag default: usernames from
+            # claims other than 'email' are prefixed with '<issuer-url>#'.
+            prefix = var.oidc_username_claim == "email" ? "" : "${var.oidc_issuer_url}#"
+          }
+          groups = {
+            claim  = var.oidc_groups_claim
+            prefix = var.oidc_groups_prefix
+          }
+        }
+      }
+    ]
+  }
+
+  kube_api_authentication_configuration = (
+    var.kube_api_authentication_config != null ? var.kube_api_authentication_config :
+    var.oidc_enabled ? local.kube_api_oidc_authentication_configuration :
+    null
+  )
+
+  # Kube API Server Authentication Configuration.
+  # When set, it replaces the Talos default authentication configuration entirely.
+  kube_api_authentication_config_patches = local.kube_api_authentication_configuration != null ? [
     {
       apiVersion    = "v1alpha1"
       kind          = "KubeAuthenticationConfig"
-      configuration = var.kube_api_authentication_config
+      configuration = local.kube_api_authentication_configuration
     }
   ] : []
+
+  # Kubernetes control plane components (Talos v1.14+ multi-document style)
+  kube_control_plane_component_patches = concat(
+    [
+      merge(
+        {
+          apiVersion    = "v1alpha1"
+          kind          = "KubeAPIServerConfig"
+          certExtraSANs = local.talos_certificate_san
+          extraArgs = merge(
+            { "enable-aggregator-routing" = true },
+            var.kube_api_extra_args
+          )
+        },
+        var.kubernetes_apiserver_image != null ? {
+          image = "${var.kubernetes_apiserver_image}:${var.kubernetes_version}"
+        } : {}
+      ),
+      merge(
+        {
+          apiVersion = "v1alpha1"
+          kind       = "KubeControllerManagerConfig"
+          extraArgs = {
+            "cloud-provider" = "external"
+            "bind-address"   = "0.0.0.0"
+          }
+        },
+        var.kubernetes_controller_manager_image != null ? {
+          image = "${var.kubernetes_controller_manager_image}:${var.kubernetes_version}"
+        } : {}
+      ),
+      merge(
+        {
+          apiVersion = "v1alpha1"
+          kind       = "KubeSchedulerConfig"
+          extraArgs = {
+            "bind-address" = "0.0.0.0"
+          }
+        },
+        var.kubernetes_scheduler_image != null ? {
+          image = "${var.kubernetes_scheduler_image}:${var.kubernetes_version}"
+        } : {}
+      ),
+      merge(
+        {
+          apiVersion = "v1alpha1"
+          kind       = "KubeProxyConfig"
+          enabled    = !var.cilium_kube_proxy_replacement_enabled
+        },
+        var.kubernetes_proxy_image != null ? {
+          image = "${var.kubernetes_proxy_image}:${var.kubernetes_version}"
+        } : {}
+      ),
+      # Cilium is used as the CNI, remove the default Flannel deployment
+      {
+        apiVersion = "v1alpha1"
+        kind       = "KubeFlannelCNIConfig"
+        "$patch"   = "delete"
+      }
+    ],
+    [
+      for plugin in var.kube_api_admission_control : {
+        apiVersion    = "v1alpha1"
+        kind          = "KubeAdmissionControlConfig"
+        name          = plugin.name
+        configuration = plugin.configuration
+      }
+    ],
+    local.kube_api_authentication_config_patches
+  )
 
   # Kubernetes Manifests for Talos
   talos_inline_manifests = concat(
@@ -95,31 +202,6 @@ locals {
             coreDNS = {
               disabled = !var.talos_coredns_enabled
             }
-            apiServer = merge(
-              {
-                admissionControl = var.kube_api_admission_control
-                certSANs         = local.talos_certificate_san
-                extraArgs = merge(
-                  { "enable-aggregator-routing" = true },
-                  local.kube_api_oidc_configuration,
-                  var.kube_api_extra_args
-                )
-              },
-              var.kubernetes_apiserver_image != null ? {
-                image = "${var.kubernetes_apiserver_image}:${var.kubernetes_version}"
-              } : {}
-            )
-            controllerManager = merge(
-              {
-                extraArgs = {
-                  "cloud-provider" = "external"
-                  "bind-address"   = "0.0.0.0"
-                }
-              },
-              var.kubernetes_controller_manager_image != null ? {
-                image = "${var.kubernetes_controller_manager_image}:${var.kubernetes_version}"
-              } : {}
-            )
             etcd = merge(
               {
                 advertisedSubnets = [hcloud_network_subnet.control_plane.ip_range]
@@ -129,16 +211,6 @@ locals {
               },
               var.kubernetes_etcd_image != null ? {
                 image = var.kubernetes_etcd_image
-              } : {}
-            )
-            scheduler = merge(
-              {
-                extraArgs = {
-                  "bind-address" = "0.0.0.0"
-                }
-              },
-              var.kubernetes_scheduler_image != null ? {
-                image = "${var.kubernetes_scheduler_image}:${var.kubernetes_version}"
               } : {}
             )
             adminKubeconfig = {
@@ -158,7 +230,7 @@ locals {
           auto       = "off"
         }
       ],
-      local.kube_api_authentication_config_patches,
+      local.kube_control_plane_component_patches,
       local.control_plane_public_vip_ipv4_enabled ? [{
         apiVersion = "v1alpha1"
         kind       = "HCloudVIPConfig"
