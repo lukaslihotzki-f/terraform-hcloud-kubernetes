@@ -863,7 +863,7 @@ variable "talos_upgrade_stage" {
 variable "talos_discovery_kubernetes_enabled" {
   type        = bool
   default     = false
-  description = "Enable or disable Kubernetes-based Talos discovery service. Deprecated as of Kubernetes v1.32, where the AuthorizeNodeWithSelectors feature gate is enabled by default."
+  description = "Enable or disable Kubernetes-based Talos discovery service. Deprecated as of Kubernetes v1.32, where the AuthorizeNodeWithSelectors feature gate is enabled by default. Has no effect on Talos v1.14+, where the Kubernetes discovery registry is no longer configurable via the multi-document machine configuration."
 }
 
 variable "talos_discovery_service_enabled" {
@@ -886,7 +886,7 @@ variable "talos_kubelet_extra_mounts" {
     options     = optional(list(string), ["bind", "rshared", "rw"])
   }))
   default     = []
-  description = "Defines extra kubelet mounts for Talos with configurable 'source', 'destination' (defaults to 'source' if unset), 'type' (defaults to 'bind'), and 'options' (defaults to ['bind', 'rshared', 'rw'])"
+  description = "Defines extra kubelet mounts for Talos with configurable 'source', 'destination' (defaults to 'source' if unset), 'type' (defaults to 'bind'), and 'options' (defaults to ['bind', 'rshared', 'rw']). Has no effect on Talos v1.14+, where the KubeletConfig document does not support extra mounts."
 
   validation {
     condition = (

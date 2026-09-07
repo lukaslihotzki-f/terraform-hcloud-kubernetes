@@ -163,50 +163,7 @@ locals {
     for name, node in hcloud_server.control_plane : name => concat(
       [
         {
-          machine = {
-            nodeLabels = merge(
-              local.talos_allow_scheduling_on_control_planes ? { "node.kubernetes.io/exclude-from-external-load-balancers" = { "$patch" = "delete" } } : {},
-              local.control_plane_nodepools_map[node.labels.nodepool].labels,
-              { "nodeid" = tostring(node.id) }
-            )
-            nodeAnnotations = local.control_plane_nodepools_map[node.labels.nodepool].annotations
-            nodeTaints = {
-              for taint in local.control_plane_nodepools_map[node.labels.nodepool].taints : taint.key => "${taint.value}:${taint.effect}"
-            }
-            kubelet = {
-              extraConfig = merge(
-                {
-                  registerWithTaints = local.control_plane_nodepools_map[node.labels.nodepool].taints
-                  systemReserved = {
-                    cpu               = "250m"
-                    memory            = "300Mi"
-                    ephemeral-storage = "1Gi"
-                  }
-                  kubeReserved = {
-                    cpu               = "250m"
-                    memory            = "350Mi"
-                    ephemeral-storage = "1Gi"
-                  }
-                },
-                var.kubernetes_kubelet_extra_config
-              )
-            }
-            features = {
-              kubernetesTalosAPIAccess = {
-                enabled = true
-                allowedRoles = [
-                  "os:reader",
-                  "os:etcd:backup"
-                ]
-                allowedKubernetesNamespaces = ["kube-system"]
-              }
-            }
-          }
           cluster = {
-            allowSchedulingOnControlPlanes = local.talos_allow_scheduling_on_control_planes
-            coreDNS = {
-              disabled = !var.talos_coredns_enabled
-            }
             etcd = merge(
               {
                 advertisedSubnets = [hcloud_network_subnet.control_plane.ip_range]
@@ -227,6 +184,57 @@ locals {
               manifests = local.talos_manifests
             }
           }
+        },
+        {
+          apiVersion = "v1alpha1"
+          kind       = "KubeNodeConfig"
+          labels = merge(
+            local.talos_allow_scheduling_on_control_planes ? { "node.kubernetes.io/exclude-from-external-load-balancers" = { "$patch" = "delete" } } : {},
+            local.control_plane_nodepools_map[node.labels.nodepool].labels,
+            { "nodeid" = tostring(node.id) }
+          )
+          annotations = local.control_plane_nodepools_map[node.labels.nodepool].annotations
+          # The generated config taints control planes with `node-role.kubernetes.io/control-plane:NoSchedule`,
+          # remove it to allow scheduling on control planes.
+          taints = merge(
+            local.talos_allow_scheduling_on_control_planes ? { "node-role.kubernetes.io/control-plane" = { "$patch" = "delete" } } : {},
+            {
+              for taint in local.control_plane_nodepools_map[node.labels.nodepool].taints : taint.key => "${taint.value}:${taint.effect}"
+            }
+          )
+        },
+        {
+          apiVersion = "v1alpha1"
+          kind       = "KubeletConfig"
+          config = merge(
+            {
+              systemReserved = {
+                cpu               = "250m"
+                memory            = "300Mi"
+                ephemeral-storage = "1Gi"
+              }
+              kubeReserved = {
+                cpu               = "250m"
+                memory            = "350Mi"
+                ephemeral-storage = "1Gi"
+              }
+            },
+            var.kubernetes_kubelet_extra_config
+          )
+        },
+        {
+          apiVersion = "v1alpha1"
+          kind       = "KubeTalosAPIAccessConfig"
+          allowedRoles = [
+            "os:reader",
+            "os:etcd:backup"
+          ]
+          allowedKubernetesNamespaces = ["kube-system"]
+        },
+        {
+          apiVersion = "v1alpha1"
+          kind       = "KubeCoreDNSConfig"
+          enabled    = var.talos_coredns_enabled
         },
         {
           apiVersion = "v1alpha1"
